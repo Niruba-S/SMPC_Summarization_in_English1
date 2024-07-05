@@ -114,9 +114,8 @@ def extract_info_and_summarize(text):
 
         Note: Provide the output with headings should be in bold and normal text size for the content.
         """
-        from openai import OpenAI
-        client =  OpenAI(api_key=api_key)
-        response =  client.chat.completions.create(
+
+        response = openai.ChatCompletion.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information and provides structured summaries."},
@@ -181,9 +180,8 @@ def extract_info_and_summarize(text):
 
     Note: Provide the output with headings should be must in bold and normal text size for the content.
     """
-    from openai import OpenAI
-    client =  OpenAI(api_key=api_key)
-    final_response =  client.chat.completions.create(
+
+    final_response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information and provides structured summaries."},
@@ -223,9 +221,8 @@ def generate_difference_table(info1, info2):
     Give headings in bold letters 
     """
     
-    from openai import OpenAI
-    client =  OpenAI(api_key=api_key)
-    response =  client.chat.completions.create(
+
+    response = openai.ChatCompletion.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that creates concise difference tables for pharmaceutical products."},
@@ -286,9 +283,8 @@ def extract_product_name_openai(info):
     Information:
     {info}
     """
-    from openai import OpenAI
-    client =  OpenAI(api_key=api_key)
-    response =  client.chat.completions.create(
+
+    response = openai.ChatCompletion.create(
         model="gpt-4",  # You can use "gpt-4" if you have access
         messages=[
             {"role": "system", "content": "You are a helpful assistant that extracts product name which is just 2 to 3 words from pharmaceutical information."},
