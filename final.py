@@ -2,7 +2,7 @@ import streamlit as st
 import PyPDF2
 from deep_translator import GoogleTranslator
 import time
-import google.generativeai as genai
+from openai import OpenAI
 import os
 from datetime import datetime
 from reportlab.lib.pagesizes import letter
@@ -12,15 +12,16 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph
 from io import BytesIO
 from dotenv import load_dotenv
 import threading
-import openai
 from typing import List
 
 # Load environment variables
 load_dotenv()
 
 # Get API key from environment variable
-
 api_key = os.getenv('OPENAI_API_KEY')
+
+# Initialize OpenAI client
+client = OpenAI(api_key=api_key)
 
 # Function to extract text from PDF
 def extract_text_from_pdf(file):
@@ -115,7 +116,7 @@ def extract_info_and_summarize(text):
         Note: Provide the output with headings should be in bold and normal text size for the content.
         """
 
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-4",
             messages=[
                 {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information and provides structured summaries."},
@@ -125,7 +126,7 @@ def extract_info_and_summarize(text):
             max_tokens=1000
         )
 
-        summary = response.choices[0].message['content']
+        summary = response.choices[0].message.content
         summaries.append(summary)
         st.write(f"Processed chunk {i+1}. Response length: {len(summary)} characters")
 
@@ -181,7 +182,7 @@ def extract_info_and_summarize(text):
     Note: Provide the output with headings should be must in bold and normal text size for the content.
     """
 
-    final_response = openai.ChatCompletion.create(
+    final_response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information and provides structured summaries."},
@@ -191,7 +192,7 @@ def extract_info_and_summarize(text):
         max_tokens=1000
     )
 
-    final_summary = final_response.choices[0].message['content']
+    final_summary = final_response.choices[0].message.content
     st.write(f"Generated final summary. Length: {len(final_summary)} characters")
     return final_summary
 
@@ -221,8 +222,7 @@ def generate_difference_table(info1, info2):
     Give headings in bold letters 
     """
     
-
-    response = openai.ChatCompletion.create(
+    response = client.chat.completions.create(
         model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that creates concise difference tables for pharmaceutical products."},
@@ -230,7 +230,7 @@ def generate_difference_table(info1, info2):
         ]
     )
 
-    return response.choices[0].message['content']
+    return response.choices[0].message.content
 
 def create_pdf(content):
     buffer = BytesIO()
@@ -284,15 +284,15 @@ def extract_product_name_openai(info):
     {info}
     """
 
-    response = openai.ChatCompletion.create(
-        model="gpt-4",  # You can use "gpt-4" if you have access
+    response = client.chat.completions.create(
+        model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that extracts product name which is just 2 to 3 words from pharmaceutical information."},
             {"role": "user", "content": prompt}
         ]
     )
 
-    return response.choices[0].message['content'].strip()
+    return response.choices[0].message.content.strip()
 
 # Streamlit app
 st.title("SMPC summarization in English")
@@ -352,10 +352,7 @@ if st.session_state.results:
         
         st.markdown(st.session_state.comparison_table)
 
-       
-
         st.markdown("---")
-
 
     st.subheader("Individual Product Results")
     for pdf_key in ['pdf1', 'pdf2']:
