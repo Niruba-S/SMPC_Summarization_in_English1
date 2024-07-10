@@ -1,392 +1,286 @@
 import streamlit as st
 import PyPDF2
 from deep_translator import GoogleTranslator
-import time
-from openai import OpenAI
-import os
-from datetime import datetime
-from reportlab.lib.pagesizes import letter
-from reportlab.pdfgen import canvas
-from reportlab.lib.styles import getSampleStyleSheet
-from reportlab.platypus import SimpleDocTemplate, Paragraph
-from io import BytesIO
+import openai
+from textwrap import wrap
+import concurrent.futures
 from dotenv import load_dotenv
-import threading
-from typing import List
+import os
 
-# Load environment variables
+# Set your OpenAI API key
+# Load environment variables from .env file
 load_dotenv()
 
-# Get API key from environment variable
-api_key = os.getenv('OPENAI_API_KEY')
+# Set your OpenAI API key
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-# Initialize OpenAI client
-client = OpenAI(api_key=api_key)
-
-# Function to extract text from PDF
-def extract_text_from_pdf(file):
-    reader = PyPDF2.PdfReader(file)
+def extract_text_from_pdf(pdf_file):
+    pdf_reader = PyPDF2.PdfReader(pdf_file)
     text = ""
-    st.write(f"PDF has {len(reader.pages)} pages")
-    for i, page in enumerate(reader.pages):
-        page_text = page.extract_text()
-        text += page_text
-        st.write(f"Extracted {len(page_text)} characters from page {i+1}")
-    st.write(f"Total extracted text: {len(text)} characters")
+    for page in pdf_reader.pages:
+        text += page.extract_text()
     return text
 
-# Function to translate large text
-def translate_large_text(text, chunk_size=4500):
-    translator = GoogleTranslator(source='es', target='en')
+def translate_text(text, src='es', dest='en'):
+    translator = GoogleTranslator(source=src, target=dest)
+    chunk_size = 4000
     chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-    translated_text = ""
-    
-    st.write(f"Splitting text into {len(chunks)} chunks for translation")
-    
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    
-    for i, chunk in enumerate(chunks):
-        translated_chunk = translator.translate(chunk)
-        translated_text += translated_chunk
-        time.sleep(1)  # To avoid hitting rate limits
-        
-        # Update progress
-        progress = (i + 1) / len(chunks)
-        progress_bar.progress(progress)
-        status_text.text(f"Translating: {int(progress * 100)}% complete. Chunk {i+1}/{len(chunks)}")
-        
-        st.write(f"Chunk {i+1}: Translated {len(chunk)} characters to {len(translated_chunk)} characters")
-    
-    status_text.text("Translation completed!")
-    st.write(f"Total translated text: {len(translated_text)} characters")
-    return translated_text
+    translated_chunks = []
+    for chunk in chunks:
+        try:
+            translated_chunks.append(translator.translate(chunk))
+        except Exception as e:
+            st.error(f"Translation error: {str(e)}")
+            translated_chunks.append(chunk)
+    return ' '.join(translated_chunks)
 
-def split_text(text: str, max_tokens: int = 4000) -> List[str]:
-    words = text.split()
-    chunks = []
-    current_chunk = []
-    current_length = 0
-    
-    for word in words:
-        if current_length + len(word) + 1 > max_tokens:
-            chunks.append(' '.join(current_chunk))
-            current_chunk = [word]
-            current_length = len(word)
-        else:
-            current_chunk.append(word)
-            current_length += len(word) + 1
-    
-    if current_chunk:
-        chunks.append(' '.join(current_chunk))
-    
-    return chunks
+def analyze_text_with_gpt(text):
+    prompt = f"""Analyze the following part of a pharmaceutical product information and provide a partial structured summary:
+    # Partial Analysis of Pharmaceutical Product
+    [Provide relevant information for any of the following categories that are present in this text chunk.
+    If a category is not addressed in this chunk, omit it from the summary.]
+    1. **Product Name**
+    2. **Brief Description**
+    3. **Composition (Active ingredients)**
+    4. **Excipients with Known Effects**
+    5. **Dosage Form**
+    6. **Posology**
+    7. **Warnings**
+    8. **Shelf Life**
+    9. **Other Essential Information**
+    Text chunk: {text}
+    Note: Provide the output with headings in bold and normal text size for the content.
+    """
+   
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message.content
 
-# Function to extract product information and summary 
-def extract_info_and_summarize(text):
-    st.write("Preparing text for GPT-4 analysis and summarization")
-    st.write(f"Input text length: {len(text)} characters")
-
-    chunks = split_text(text)
-    st.write(f"Split text into {len(chunks)} chunks")
-
-    summaries = []
-    for i, chunk in enumerate(chunks):
-        st.write(f"Processing chunk {i+1}/{len(chunks)}")
-        
-        prompt = f"""
-        Analyze the following part of a pharmaceutical product information and provide a partial structured summary:
-
-        # Partial Analysis of Pharmaceutical Product
-
-        [Provide relevant information for any of the following categories that are present in this text chunk. 
-        If a category is not addressed in this chunk, omit it from the summary.]
-
-        1. Product Name
-        2. Brief Description
-        3. Composition (Active ingredients)
-        4. Excipients with Known Effects
-        5. Dosage Form
-        6. Posology
-        7. Warnings
-        8. Other Essential Information
-
-        Text chunk: {chunk}
-
-        Note: Provide the output with headings should be in bold and normal text size for the content.
-        """
-
-        response = client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information and provides structured summaries."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5,
-            max_tokens=1000
-        )
-
-        summary = response.choices[0].message.content
-        summaries.append(summary)
-        st.write(f"Processed chunk {i+1}. Response length: {len(summary)} characters")
-
-    # Combine summaries
+def generate_final_summary(summaries):
     combined_summary = "\n\n".join(summaries)
-
-    # Generate final summary
     final_prompt = f"""
     Based on the following combined partial analyses of a pharmaceutical product, provide a final structured summary:
-
     {combined_summary}
-
     Please format the final summary as follows:
-
-    Analysis of Pharmaceutical Product(normal text size but in bold)
-
-    1. Product Name
-    [Product Name which is just 2 words]
-
-    2. Brief Description
+    **Analysis of Pharmaceutical Product**
+    1. **Product Name**
+    [Product Name which is just 2-3 words]
+    2. **Brief Description**
     [2-3 sentence description of the product]
-
-    3. Composition
+    3. **Composition**
     - Active ingredient(s):
       - [Ingredient 1]
       - [Ingredient 2]
       - ...
-
-    4. Excipients with Known Effects
+    4. **Excipients with Known Effects**
     - [Excipient 1]
     - [Excipient 2]
     - ...
-
-    5. Dosage Form
+    5. **Dosage Form**
     [Dosage form]
-
-    6. Posology
+    6. **Posology**
     [Brief summary of dosage instructions]
-
-    7. Warnings
+    7. **Warnings**
     - [Warning 1]
     - [Warning 2]
     - ...
-
-    8. Other Essential Information
+    8. **Shelf Life**
+    [Shelf life]
+    9. **Other Essential Information**
     - [Information 1]
     - [Information 2]
     - ...
-
-    9. Overall Summary
+    10. **Overall Summary**
     [A concise summary of the key points from the text]
-
-    Note: Provide the output with headings should be must in bold and normal text size for the content.
+    Note: Provide the output with headings in bold and normal text size for the content.
     """
-
-    final_response = client.chat.completions.create(
-        model="gpt-4",
+   
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information and provides structured summaries."},
+            {"role": "system", "content": "You are a helpful assistant that summarizes pharmaceutical product information."},
             {"role": "user", "content": final_prompt}
-        ],
-        temperature=0.5,
-        max_tokens=1000
-    )
-
-    final_summary = final_response.choices[0].message.content
-    st.write(f"Generated final summary. Length: {len(final_summary)} characters")
-    return final_summary
-
-def generate_difference_table(info1, info2):
-    prompt = f"""
-    Create a difference table for the following two pharmaceutical products. Use the product names as the top heading. For each key information heading, provide a concise comparison of the two products.
-
-    Product 1 Information:
-    {info1}
-
-    Product 2 Information:
-    {info2}
-    
-
-    Format the output as a markdown table.
-    
-    After the table, provide the following sections as regular text (not in table format):
-
-    Advantages and Competitive Edge:
-     - List the advantages and competitive edge of Azacitidine Sandoz
-     - List the advantages and competitive edge of Azacitidine Ever Pharma
-
-    Overall conclusion
-     - Provide an overall evaluation and recommendation on which product is better based on the analysis above.
-     - Summarize the findings, emphasizing the distinct advantages and competitive edges of each product, and provide a final recommendation.
-     
-    Give headings in bold letters 
-    """
-    
-    response = client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that creates concise difference tables for pharmaceutical products."},
-            {"role": "user", "content": prompt}
         ]
     )
-
     return response.choices[0].message.content
 
-def create_pdf(content):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=letter)
-    styles = getSampleStyleSheet()
-    flowables = []
-
-    for line in content.split('\n'):
-        p = Paragraph(line, styles['Normal'])
-        flowables.append(p)
-
-    doc.build(flowables)
-    buffer.seek(0)
-    return buffer
-
-def process_pdf(file, result_dict, key):
-    try:
-        st.write(f"Starting to process {key}")
-        st.write(f"File size: {file.size} bytes")
-        
-        spanish_text = extract_text_from_pdf(file)
-        st.write(f"{key}: Extracted text. Length: {len(spanish_text)} characters")
-        
-        english_text = translate_large_text(spanish_text)
-        st.write(f"{key}: Translated text. Length: {len(english_text)} characters")
-        
-        # Display a sample of the translated text
-        st.write(f"Sample of translated text for {key}:")
-        st.write(english_text[:500] + "...")  # Display first 500 characters
-        
-        info_and_summary = extract_info_and_summarize(english_text)
-        st.write(f"{key}: Generated summary. Length: {len(info_and_summary)} characters")
-        
-        result_dict[key] = {
-            'english_text': english_text,
-            'info_and_summary': info_and_summary
-        }
-        st.write(f"Finished processing {key}")
-    except Exception as e:
-        st.error(f"Error processing {key}: {str(e)}")
-        result_dict[key] = {
-            'english_text': f"Error: {str(e)}",
-            'info_and_summary': f"Error: {str(e)}"
-        }
-
-def extract_product_name_openai(info):
+def create_difference_table(info1, info2):
     prompt = f"""
-    Extract the product name from the following information. Return only the product name, nothing else.
+    Create a detailed difference table for the following two pharmaceutical products. Use the product names as the top heading. For each key information heading, provide a concise comparison of the two products.
+   
+    Product 1 Information:
+    {info1}
+   
+    Product 2 Information:
+    {info2}
+   
+    Format the output as a markdown table with the following columns:
+    - **Key Information**
+    - **Product 1**
+    - **Product 2**
 
-    Information:
-    {info}
+    After the table, provide the following sections as regular text (not in table format):
+    **Advantages and Competitive Edge:**
+    - For Product 1, provide a detailed list of advantages and competitive edges. Include specific information about:
+      - Effectiveness for its intended use
+      - Unique features or formulation
+      - Dosage convenience
+      - Side effect profile
+      - Any other relevant factors that set it apart
+    - Repeat the same detailed analysis for Product 2
+
+    **Overall Conclusion:**
+    - Provide an overall evaluation comparing both products.
+    - Discuss potential scenarios or patient profiles where one product might be preferred over the other.
+    - Summarize the key differences and their implications for treatment.
+    - Conclude with a balanced perspective, acknowledging that the final choice should be made in consultation with healthcare professionals.
+
+    Ensure all headings are in bold letters and the output is clear, concise, and informative.
     """
-
-    response = client.chat.completions.create(
-        model="gpt-4",
+   
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that extracts product name which is just 2 to 3 words from pharmaceutical information."},
+            {"role": "system", "content": "You are a helpful assistant that compares pharmaceutical products."},
             {"role": "user", "content": prompt}
         ]
     )
+    return response.choices[0].message.content
 
-    return response.choices[0].message.content.strip()
+def process_pdf(uploaded_file):
+    text = extract_text_from_pdf(uploaded_file)
+    translated_text = translate_text(text)
+   
+    chunk_size = 2000
+    chunks = wrap(translated_text, chunk_size)
+   
+    partial_analyses = []
+    for chunk in chunks:
+        partial_analyses.append(analyze_text_with_gpt(chunk))
+   
+    final_summary = generate_final_summary(partial_analyses)
+   
+    return final_summary
 
-# Streamlit app
-st.title("SMPC summarization in English")
+def extract_product_name(summary):
+    lines = summary.split('\n')
+    for line in lines:
+        if line.startswith('1. **Product Name**'):
+            return ' '.join(line.split()[3:]).strip()
+    return "Product Name Not Found"
 
-# Multiple file uploader
-uploaded_files = st.file_uploader("Choose two PDF files", type="pdf", accept_multiple_files=True)
+def process_pdfs_in_parallel(uploaded_files):
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        futures = {executor.submit(process_pdf, pdf): pdf.name for pdf in uploaded_files}
+        results = {}
+        for future in concurrent.futures.as_completed(futures):
+            pdf_name = futures[future]
+            try:
+                result = future.result()
+                results[pdf_name] = result
+            except Exception as e:
+                st.error(f"Error processing PDF {pdf_name}: {e}")
+        return results
 
-st.markdown("""
-<style>
-    .product-analysis h1 {font-size: 24px;}
-    .product-analysis h2 {font-size: 20px;}
-    .product-analysis p {font-size: 16px;}
-    .product-analysis ul {font-size: 16px;}
-    .product-analysis li {font-size: 16px;}
-    .product-analysis strong {font-weight: bold;}
-    .product-analysis em {font-style: italic;}
-</style>
-""", unsafe_allow_html=True)
+def answer_query(query, summary1, summary2):
+    prompt = f"""
+    You are an assistant knowledgeable in pharmaceutical products. Answer the following question based on the provided summaries of two pharmaceutical products:
+   
+    Question: {query}
+   
+    Summary of Product 1:
+    {summary1}
+   
+    Summary of Product 2:
+    {summary2}
+   
+    Provide a concise and informative response.
+    """
+   
+    response = openai.ChatCompletion.create(
+        model="gpt-3.5-turbo",
+        messages=[
+            {"role": "system", "content": "You are an assistant knowledgeable in pharmaceutical products."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+    return response.choices[0].message.content
 
-if 'results' not in st.session_state:
-    st.session_state.results = {}
+def main():
+    st.title("SMPC summarization in English")
 
-if uploaded_files and len(uploaded_files) == 2 and api_key:
-    if st.button("Process PDFs"):
-        try:
-            with st.spinner("Processing PDFs..."):
-                results = {}
-                threads = [
-                    threading.Thread(target=process_pdf, args=(uploaded_files[0], results, 'pdf1')),
-                    threading.Thread(target=process_pdf, args=(uploaded_files[1], results, 'pdf2'))
-                ]
-                
-                for thread in threads:
-                    thread.start()
-                
-                for thread in threads:
-                    thread.join()
-                
-                st.session_state.results = results
-                
-            st.success("PDFs processed successfully!")
-        except Exception as e:
-            st.error(f"An error occurred: {str(e)}")
+    if 'analysis_complete' not in st.session_state:
+        st.session_state.analysis_complete = False
 
-# Display results
-if st.session_state.results:
-    st.subheader("Results Overview")
-    st.write(f"Number of processed PDFs: {len(st.session_state.results)}")
+    uploaded_files = st.file_uploader("Upload two Spanish PDFs", type="pdf", accept_multiple_files=True)
     
-    if len(st.session_state.results) == 2:
-        st.subheader("Comparison Table")
-        if 'comparison_table' not in st.session_state:
-            with st.spinner("Generating comparison table..."):
-                info1 = st.session_state.results['pdf1']['info_and_summary']
-                info2 = st.session_state.results['pdf2']['info_and_summary']
-                st.session_state.comparison_table = generate_difference_table(info1, info2)
-        
-        st.markdown(st.session_state.comparison_table)
+    if uploaded_files and len(uploaded_files) == 2:
+        if st.button("Translate and Analyze"):
+            with st.spinner("Processing PDFs..."):
+                results = process_pdfs_in_parallel(uploaded_files)
+                summary1 = results[uploaded_files[0].name]
+                summary2 = results[uploaded_files[1].name]
+                product_name1 = extract_product_name(summary1)
+                product_name2 = extract_product_name(summary2)
+                st.session_state.summary1 = summary1
+                st.session_state.product_name1 = product_name1
+                st.session_state.summary2 = summary2
+                st.session_state.product_name2 = product_name2
 
-        st.markdown("---")
+            with st.spinner("Generating difference table and comparison..."):
+                difference_table = create_difference_table(st.session_state.summary1, st.session_state.summary2)
+                st.session_state.difference_table = difference_table
 
-    st.subheader("Individual Product Results")
-    for pdf_key in ['pdf1', 'pdf2']:
-     if pdf_key in st.session_state.results:
-        result = st.session_state.results[pdf_key]
-        
-        # Extract product name using OpenAI
-        product_name = extract_product_name_openai(result['info_and_summary'])
-        
-        with st.expander(f"Results for {product_name}"):
-            info_lines = result['info_and_summary'].split('\n')
-            for line in info_lines:
-                line = line.strip()
-                if line:
-                    st.markdown(line)
-            
-            col1, col2 = st.columns(2)
-            with col1:
-                st.download_button(
-                    label=f"Download English Text ({product_name})",
-                    data=result['english_text'],
-                    file_name=f"extracted_english_text_{product_name}.txt",
-                    mime="text/plain",
-                    key=f"download_english_{pdf_key}"
-                )
-            
-            with col2:
-                pdf_buffer = create_pdf(result['info_and_summary'])
-                st.download_button(
-                    label=f"Download Summary ({product_name})",
-                    data=pdf_buffer,
-                    file_name=f"product_info_and_summary_{product_name}.pdf",
-                    mime="application/pdf",
-                    key=f"download_summary_pdf_{pdf_key}"
-                )
+            st.session_state.analysis_complete = True
 
-    st.markdown("---")
+    if st.session_state.analysis_complete:
+        st.subheader("Difference Table and Comparison")
+        st.markdown(st.session_state.difference_table)
+
+        st.subheader(st.session_state.product_name1)
+        st.markdown(st.session_state.summary1)
+
+        st.subheader(st.session_state.product_name2)
+        st.markdown(st.session_state.summary2)
+
+        col1, col2, col3 = st.columns(3)
+       
+        with col1:
+            st.download_button(
+                label="Download Summary 1",
+                data=st.session_state.summary1,
+                file_name="summary1.txt",
+                mime="text/plain"
+            )
+       
+        with col2:
+            st.download_button(
+                label="Download Summary 2",
+                data=st.session_state.summary2,
+                file_name="summary2.txt",
+                mime="text/plain"
+            )
+
+        with col3:
+            st.download_button(
+                label="Download Comparison",
+                data=st.session_state.difference_table,
+                file_name="comparison.txt",
+                mime="text/plain"
+            )
+       
+        st.subheader("Chat assistant")
+        user_query = st.text_input("Enter your question about the products")
+       
+        if user_query:
+            with st.spinner("Generating answer..."):
+                answer = answer_query(user_query, st.session_state.summary1, st.session_state.summary2)
+                st.markdown(f"**Answer:** {answer}")
+
+if __name__ == "__main__":
+    main()
