@@ -39,6 +39,7 @@ def analyze_text_with_gpt(text):
     [Provide relevant information for any of the following categories that are present in this text chunk.
     If a category is not addressed in this chunk, omit it from the summary.]
     1. **Product Name**
+       [which is always 2-3 words]
     2. **Brief Description**
     3. **Composition (Active ingredients)**
     4. **Excipients with Known Effects**
