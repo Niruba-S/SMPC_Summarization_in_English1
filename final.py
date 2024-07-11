@@ -7,7 +7,6 @@ import concurrent.futures
 from dotenv import load_dotenv
 import os
 
-# Set your OpenAI API key
 # Load environment variables from .env file
 load_dotenv()
 
@@ -44,18 +43,19 @@ def analyze_text_with_gpt(text):
     3. **Composition (Active ingredients)**
     4. **Excipients with Known Effects**
     5. **Dosage Form**
-    6. **Posology**
+    6. **Posology**(include info based on body surface area if applicable)
     7. **Warnings**
-    8. **Shelf Life**
-    9. **Other Essential Information**
+    8. **Shelf Life**(include storage conditions, stability, and instructions on specific storage after reconstitution in easily understandable way. Include exact durations, temperatures, and any special handling instructions. If information is not available, clearly state "Information not provided")
+    9. **Indications**
+    10. **Other essential information**(include other information which are important)
     Text chunk: {text}
-    Note: Provide the output with headings in bold and normal text size for the content.
+    Note: Provide the output with headings in bold and normal text size for the content. Ensure that the Shelf Life information is detailed and complete.
     """
    
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product information."},
+            {"role": "system", "content": "You are a helpful assistant that analyzes pharmaceutical product and provide exact details."},
             {"role": "user", "content": prompt}
         ]
     )
@@ -90,14 +90,18 @@ def generate_final_summary(summaries):
     - [Warning 2]
     - ...
     8. **Shelf Life**
-    [Shelf life]
-    9. **Other Essential Information**
+    [Provide detailed shelf life information, including storage conditions, stability, and any special instructions]
+    
+    9. **Indications**
+    [List of indications]
+    
+    10. **Other Essential Information**
     - [Information 1]
     - [Information 2]
     - ...
-    10. **Overall Summary**
+    11. **Overall Summary**
     [A concise summary of the key points from the text]
-    Note: Provide the output with headings in bold and normal text size for the content.
+    Note: Provide the output with headings in bold and normal text size for the content. Ensure that the Shelf Life information is detailed and complete.
     """
    
     response = openai.ChatCompletion.create(
@@ -124,6 +128,8 @@ def create_difference_table(info1, info2):
     - **Product 1**
     - **Product 2**
 
+    Ensure that you include a detailed comparison of the Shelf Life information for both products in the table.
+
     After the table, provide the following sections as regular text (not in table format):
     **Advantages and Competitive Edge:**
     - For Product 1, provide a detailed list of advantages and competitive edges. Include specific information about:
@@ -131,13 +137,14 @@ def create_difference_table(info1, info2):
       - Unique features or formulation
       - Dosage convenience
       - Side effect profile
+      - Shelf life and storage advantages
       - Any other relevant factors that set it apart
     - Repeat the same detailed analysis for Product 2
 
     **Overall Conclusion:**
     - Provide an overall evaluation comparing both products.
     - Discuss potential scenarios or patient profiles where one product might be preferred over the other.
-    - Summarize the key differences and their implications for treatment.
+    - Summarize the key differences and their implications for treatment, including any differences in shelf life or storage requirements.
     - Conclude with a balanced perspective, acknowledging that the final choice should be made in consultation with healthcare professionals.
 
     Ensure all headings are in bold letters and the output is clear, concise, and informative.
@@ -165,7 +172,7 @@ def process_pdf(uploaded_file):
    
     final_summary = generate_final_summary(partial_analyses)
    
-    return final_summary
+    return final_summary, translated_text
 
 def extract_product_name(summary):
     lines = summary.split('\n')
@@ -181,8 +188,8 @@ def process_pdfs_in_parallel(uploaded_files):
         for future in concurrent.futures.as_completed(futures):
             pdf_name = futures[future]
             try:
-                result = future.result()
-                results[pdf_name] = result
+                summary, translated_text = future.result()
+                results[pdf_name] = (summary, translated_text)
             except Exception as e:
                 st.error(f"Error processing PDF {pdf_name}: {e}")
         return results
@@ -223,13 +230,15 @@ def main():
         if st.button("Translate and Analyze"):
             with st.spinner("Processing PDFs..."):
                 results = process_pdfs_in_parallel(uploaded_files)
-                summary1 = results[uploaded_files[0].name]
-                summary2 = results[uploaded_files[1].name]
+                summary1, translated_text1 = results[uploaded_files[0].name]
+                summary2, translated_text2 = results[uploaded_files[1].name]
                 product_name1 = extract_product_name(summary1)
                 product_name2 = extract_product_name(summary2)
                 st.session_state.summary1 = summary1
+                st.session_state.translated_text1 = translated_text1
                 st.session_state.product_name1 = product_name1
                 st.session_state.summary2 = summary2
+                st.session_state.translated_text2 = translated_text2
                 st.session_state.product_name2 = product_name2
 
             with st.spinner("Generating difference table and comparison..."):
@@ -248,7 +257,7 @@ def main():
         st.subheader(st.session_state.product_name2)
         st.markdown(st.session_state.summary2)
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
        
         with col1:
             st.download_button(
@@ -268,9 +277,17 @@ def main():
 
         with col3:
             st.download_button(
-                label="Download Comparison",
-                data=st.session_state.difference_table,
-                file_name="comparison.txt",
+                label="Download Translated Text 1",
+                data=st.session_state.translated_text1,
+                file_name="translated_text1.txt",
+                mime="text/plain"
+            )
+
+        with col4:
+            st.download_button(
+                label="Download Translated Text 2",
+                data=st.session_state.translated_text2,
+                file_name="translated_text2.txt",
                 mime="text/plain"
             )
        
